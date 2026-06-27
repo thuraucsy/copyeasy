@@ -12,6 +12,10 @@ let conn = null;
 const receiving = {};   // fileId → { meta, chunks[] }
 let fileIdCounter = 0;  // monotonic uint32, wraps at 2^32
 
+let heartbeatTimer   = null;
+let heartbeatTimeout = null;
+let reconnectAttempts = 0;
+
 // ── Helpers ────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 
@@ -92,6 +96,30 @@ function waitForBuffer() {
   });
 }
 
+// ── Heartbeat ──────────────────────────────────────
+// Sends a ping every 5 s. If no pong arrives within 8 s the data channel
+// is silently dead (common on mobile after screen lock or network switch).
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (!conn?.open) return;
+    conn.send({ type: 'ping' });
+    heartbeatTimeout = setTimeout(() => {
+      showToast('Connection lost — reconnect when ready.');
+      if (conn) { conn.close(); conn = null; }
+      setStatus('ready', 'Ready');
+      showScreen('screen-ready');
+    }, 8000);
+  }, 5000);
+}
+
+function stopHeartbeat() {
+  clearInterval(heartbeatTimer);
+  clearTimeout(heartbeatTimeout);
+  heartbeatTimer = null;
+  heartbeatTimeout = null;
+}
+
 // ── QR Code ────────────────────────────────────────
 function renderQR(text) {
   const container = $('qr-container');
@@ -125,6 +153,7 @@ function initPeer() {
   });
 
   peer.on('open', (id) => {
+    reconnectAttempts = 0;
     $('my-id-text').textContent = id;
     renderQR(id);
     setStatus('ready', 'Ready');
@@ -142,17 +171,31 @@ function initPeer() {
 
   peer.on('error', (err) => {
     console.error('Peer error:', err);
-    const msg = err.type === 'peer-unavailable'
-      ? 'Device not found. Check the ID and try again.'
-      : err.message || 'Connection error';
-    showConnectError(msg);
-    setStatus('error', 'Error');
+    if (err.type === 'peer-unavailable') {
+      showConnectError('Device not found. Check the ID and try again.');
+      setStatus('ready', 'Ready');
+    } else if (['server-error', 'socket-error', 'socket-closed'].includes(err.type)) {
+      // Signaling server issue — retry with backoff
+      scheduleReconnect();
+    } else {
+      showConnectError(err.message || 'Connection error');
+      setStatus('error', 'Error');
+    }
   });
 
   peer.on('disconnected', () => {
-    setStatus('connecting', 'Reconnecting…');
-    peer.reconnect();
+    scheduleReconnect();
   });
+}
+
+function scheduleReconnect() {
+  if (peer?.destroyed) return;
+  const delay = Math.min(500 * 2 ** reconnectAttempts, 16000); // 500ms → 1s → 2s … → 16s
+  reconnectAttempts++;
+  setStatus('connecting', `Reconnecting… (${reconnectAttempts})`);
+  setTimeout(() => {
+    if (!peer?.destroyed) peer.reconnect();
+  }, delay);
 }
 
 // ── Connection handling ────────────────────────────
@@ -163,6 +206,7 @@ function setupConn(c) {
     setStatus('connected', 'Connected');
     showScreen('screen-transfer');
     showToast('Connected! You can now send files.');
+    startHeartbeat();
   });
 
   conn.on('data', (data) => {
@@ -170,6 +214,7 @@ function setupConn(c) {
   });
 
   conn.on('close', () => {
+    stopHeartbeat();
     conn = null;
     setStatus('ready', 'Ready');
     showScreen('screen-ready');
@@ -177,6 +222,7 @@ function setupConn(c) {
   });
 
   conn.on('error', (err) => {
+    stopHeartbeat();
     console.error('Connection error:', err);
     showToast('Connection error: ' + err.message);
   });
@@ -213,6 +259,14 @@ function handleData(data) {
   if (!data || typeof data !== 'object') return;
 
   switch (data.type) {
+    case 'ping':
+      if (conn?.open) conn.send({ type: 'pong' });
+      break;
+    case 'pong':
+      clearTimeout(heartbeatTimeout);
+      heartbeatTimeout = null;
+      break;
+
     case 'file-start': {
       receiving[data.fileId] = {
         name: data.name,
@@ -524,6 +578,7 @@ function initUI() {
 
   // Disconnect
   $('btn-disconnect').addEventListener('click', () => {
+    stopHeartbeat();
     if (conn) conn.close();
   });
 
