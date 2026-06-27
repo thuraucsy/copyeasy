@@ -4,12 +4,13 @@
 const CHUNK_SIZE   = 64 * 1024;   // 64 KB per chunk (safe for all browsers incl. iOS Safari)
 const HIGH_WATER   = 512 * 1024;  // pause sending when WebRTC buffer exceeds 512 KB
 const LOW_WATER    = 128 * 1024;  // resume as soon as buffer drains to 128 KB
+const HDR_BYTES    = 4;           // bytes prefixed to every binary chunk (uint32 fileId)
 
 // ── State ──────────────────────────────────────────
 let peer = null;
 let conn = null;
-const receiving = {};        // fileId → { meta, chunks[] }
-let currentRecvId = null;    // which file binary chunks currently belong to
+const receiving = {};   // fileId → { meta, chunks[] }
+let fileIdCounter = 0;  // monotonic uint32, wraps at 2^32
 
 // ── Helpers ────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -213,7 +214,6 @@ function handleData(data) {
 
   switch (data.type) {
     case 'file-start': {
-      currentRecvId = data.fileId;
       receiving[data.fileId] = {
         name: data.name,
         size: data.size,
@@ -229,33 +229,33 @@ function handleData(data) {
     }
     case 'file-end': {
       finalizeReceive(data.fileId);
-      currentRecvId = null;
       break;
     }
   }
 }
 
 function handleBinaryChunk(uint8) {
-  if (!currentRecvId) return;
-  const f = receiving[currentRecvId];
+  if (uint8.byteLength <= HDR_BYTES) return;
+  const fileId = new DataView(uint8.buffer, uint8.byteOffset).getUint32(0, false);
+  const data = uint8.slice(HDR_BYTES);
+  const f = receiving[fileId];
   if (!f) return;
-  f.chunks.push(uint8);
+  f.chunks.push(data);
   f.received++;
-  f.bytesReceived += uint8.byteLength;
-  updateReceiveProgress(currentRecvId, f.bytesReceived, f.size, f.startTime);
+  f.bytesReceived += data.byteLength;
+  updateReceiveProgress(fileId, f.bytesReceived, f.size, f.startTime);
 }
 
 // ── Sending files ──────────────────────────────────
-async function sendFiles(files) {
-  for (const file of files) {
-    await sendOneFile(file);
-  }
+function sendFiles(files) {
+  // All files transfer in parallel — each gets its own fileId in the chunk header
+  return Promise.all(Array.from(files).map(f => sendOneFile(f)));
 }
 
 async function sendOneFile(file) {
   if (!conn || !conn.open) return;
 
-  const fileId = Math.random().toString(36).slice(2);
+  const fileId = (fileIdCounter++) >>> 0; // uint32, wraps safely
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
   const itemEl = addSendItem(fileId, file.name, file.size);
   const startTime = Date.now();
@@ -287,7 +287,12 @@ async function sendOneFile(file) {
     // Back off only if buffer is saturated — fires instantly via bufferedamountlow
     await waitForBuffer();
 
-    conn.send(buffer);
+    // Prefix 4-byte fileId so receiver can demux parallel transfers
+    const packed = new Uint8Array(HDR_BYTES + buffer.byteLength);
+    new DataView(packed.buffer).setUint32(0, fileId, false);
+    packed.set(new Uint8Array(buffer), HDR_BYTES);
+    conn.send(packed.buffer);
+
     bytesSent += buffer.byteLength;
     updateSendProgress(itemEl, bytesSent, file.size, startTime);
   }
