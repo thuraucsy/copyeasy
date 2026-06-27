@@ -58,7 +58,7 @@ function fileExt(name) {
 
 function generateShortId() {
   // 6 char alphanumeric, easy to type
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+  return Math.random().toString(36).slice(2, 6).toUpperCase();
 }
 
 // ── Speed / ETA display ────────────────────────────
@@ -509,6 +509,13 @@ function initUI() {
   // Connect button
   $('btn-connect').addEventListener('click', () => {
     connectToPeer($('peer-id-input').value);
+  });
+
+  $('peer-id-input').addEventListener('input', (e) => {
+    const el = e.target;
+    const pos = el.selectionStart;
+    el.value = el.value.toUpperCase();
+    el.setSelectionRange(pos, pos);
   });
 
   $('peer-id-input').addEventListener('keydown', (e) => {
