@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#2563EB">
+  <title>CopyEasy — Instant File Transfer</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+
+    <header>
+      <div class="logo">
+        <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect width="32" height="32" rx="8" fill="#2563EB"/>
+          <path d="M10 16L16 10L22 16M16 10V24" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>CopyEasy</span>
+      </div>
+      <div id="status-badge" class="badge badge--connecting">
+        <span class="badge__dot"></span>
+        <span id="status-text">Starting…</span>
+      </div>
+    </header>
+
+    <main>
+
+      <!-- Step 1: Initializing -->
+      <section id="screen-init" class="screen screen--active">
+        <div class="spinner"></div>
+        <p class="hint">Setting up your session…</p>
+      </section>
+
+      <!-- Step 2: Ready — show ID + connect form -->
+      <section id="screen-ready" class="screen">
+
+        <div class="panel" id="panel-my-id">
+          <h2>Your Device</h2>
+          <p class="sub">Share this code or QR with the other device</p>
+          <div id="qr-container"></div>
+          <div class="id-row">
+            <span id="my-id-text" class="id-text"></span>
+            <button id="btn-copy-id" class="btn btn--ghost btn--sm" title="Copy ID">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div class="divider"><span>or connect to other device</span></div>
+
+        <div class="panel">
+          <h2>Join a Device</h2>
+          <p class="sub">Enter the ID shown on the other device</p>
+          <div class="input-row">
+            <input
+              id="peer-id-input"
+              type="text"
+              inputmode="text"
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="none"
+              spellcheck="false"
+              placeholder="Paste or type device ID…"
+            >
+            <button id="btn-connect" class="btn btn--primary">Connect</button>
+          </div>
+          <p id="connect-error" class="error-msg hidden"></p>
+        </div>
+
+      </section>
+
+      <!-- Step 3: Connected — send / receive -->
+      <section id="screen-transfer" class="screen">
+
+        <div class="connected-bar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+          <span>Connected</span>
+          <button id="btn-disconnect" class="btn btn--ghost btn--sm btn--danger">Disconnect</button>
+        </div>
+
+        <!-- Send area -->
+        <div class="panel">
+          <h2>Send Files</h2>
+          <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Select or drop files">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <p>Tap to choose files</p>
+            <p class="hint" id="drop-zone-hint">or drag &amp; drop here</p>
+            <input id="file-input" type="file" multiple aria-hidden="true">
+          </div>
+          <div id="send-queue" class="file-list hidden"></div>
+        </div>
+
+        <!-- Receive area -->
+        <div class="panel" id="panel-received">
+          <h2>Received Files</h2>
+          <div id="received-list" class="file-list">
+            <p class="hint" id="no-files-hint">No files received yet</p>
+          </div>
+        </div>
+
+      </section>
+
+    </main>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast hidden"></div>
+
+  </div>
+
+  <!-- QR code library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js" crossorigin="anonymous"></script>
+  <!-- PeerJS for WebRTC signaling + data channel -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js" crossorigin="anonymous"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
