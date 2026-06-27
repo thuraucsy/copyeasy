@@ -2,8 +2,8 @@
 
 // ── Config ─────────────────────────────────────────
 const CHUNK_SIZE   = 64 * 1024;   // 64 KB per chunk (safe for all browsers incl. iOS Safari)
-const HIGH_WATER   = 1024 * 1024; // pause sending when WebRTC buffer exceeds 1 MB
-const DRAIN_POLL   = 50;          // ms between buffer checks
+const HIGH_WATER   = 512 * 1024;  // pause sending when WebRTC buffer exceeds 512 KB
+const LOW_WATER    = 128 * 1024;  // resume as soon as buffer drains to 128 KB
 
 // ── State ──────────────────────────────────────────
 let peer = null;
@@ -74,17 +74,20 @@ function buildStatusText(pct, bytesDone, totalBytes, startTime) {
 }
 
 // ── Flow control ───────────────────────────────────
-// Wait until the WebRTC send buffer drains below HIGH_WATER.
-// Prevents dropped chunks and sluggish progress on 3G/weak connections.
+// Uses the bufferedamountlow event so we resume the instant the buffer drains
+// to LOW_WATER — no polling delay. Falls back to a 1s timeout for safety.
 function waitForBuffer() {
   const dc = conn?.dataChannel;
   if (!dc || dc.bufferedAmount < HIGH_WATER) return Promise.resolve();
   return new Promise(resolve => {
-    const check = () => {
-      if (!conn || dc.bufferedAmount < HIGH_WATER) { resolve(); return; }
-      setTimeout(check, DRAIN_POLL);
-    };
-    setTimeout(check, DRAIN_POLL);
+    dc.bufferedAmountLowThreshold = LOW_WATER;
+    const onDrain = () => { cleanup(); resolve(); };
+    const fallback = setTimeout(() => { cleanup(); resolve(); }, 1000);
+    function cleanup() {
+      dc.removeEventListener('bufferedamountlow', onDrain);
+      clearTimeout(fallback);
+    }
+    dc.addEventListener('bufferedamountlow', onDrain, { once: true });
   });
 }
 
@@ -268,21 +271,25 @@ async function sendOneFile(file) {
     totalChunks,
   });
 
+  // Prefetch the first chunk immediately
+  let nextRead = file.slice(0, CHUNK_SIZE).arrayBuffer();
+
   for (let i = 0; i < totalChunks; i++) {
-    // Back off if the WebRTC buffer is saturated (critical on 3G)
+    // Await the already-in-flight read for this chunk
+    const buffer = await nextRead;
+
+    // Kick off the NEXT read immediately — overlaps with buffer wait + send
+    if (i + 1 < totalChunks) {
+      const s = (i + 1) * CHUNK_SIZE;
+      nextRead = file.slice(s, s + CHUNK_SIZE).arrayBuffer();
+    }
+
+    // Back off only if buffer is saturated — fires instantly via bufferedamountlow
     await waitForBuffer();
 
-    const start = i * CHUNK_SIZE;
-    const buffer = await file.slice(start, start + CHUNK_SIZE).arrayBuffer();
-
-    // Send raw bytes — no base64, no JSON wrapper
     conn.send(buffer);
-
     bytesSent += buffer.byteLength;
     updateSendProgress(itemEl, bytesSent, file.size, startTime);
-
-    // Yield every 8 chunks so the UI thread can breathe
-    if (i % 8 === 7) await new Promise(r => setTimeout(r, 0));
   }
 
   conn.send({ type: 'file-end', fileId });
