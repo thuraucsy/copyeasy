@@ -15,6 +15,7 @@ let fileIdCounter = 0;  // monotonic uint32, wraps at 2^32
 let heartbeatTimer   = null;
 let heartbeatTimeout = null;
 let reconnectAttempts = 0;
+let bc = null; // BroadcastChannel for same-origin tab discovery
 
 // ── Helpers ────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
@@ -96,6 +97,30 @@ function waitForBuffer() {
   });
 }
 
+// ── Same-origin tab auto-connect ───────────────────
+// When two tabs on the same site are open, the newer tab auto-connects
+// to the existing one without needing to type or scan the ID.
+function initBroadcast(myId) {
+  if (!window.BroadcastChannel) return;
+  bc = new BroadcastChannel('copyeasy');
+
+  bc.onmessage = ({ data }) => {
+    if (!data?.type) return;
+    // Existing tab: reply with our ID so the new tab can connect
+    if (data.type === 'whosthere') {
+      bc.postMessage({ type: 'hello', id: myId });
+    }
+    // New tab: received an ID from another tab — auto-connect
+    if (data.type === 'hello' && data.id !== myId && !conn?.open) {
+      showToast('Same-site tab detected, connecting…');
+      connectToPeer(data.id);
+    }
+  };
+
+  // Ask any already-open tabs to announce themselves
+  bc.postMessage({ type: 'whosthere' });
+}
+
 // ── Heartbeat ──────────────────────────────────────
 // Sends a ping every 5 s. If no pong arrives within 8 s the data channel
 // is silently dead (common on mobile after screen lock or network switch).
@@ -155,10 +180,22 @@ function initPeer() {
   peer.on('open', (id) => {
     reconnectAttempts = 0;
     $('my-id-text').textContent = id;
-    renderQR(id);
+
+    // QR encodes a full connect URL so scanning it auto-connects on any device
+    const connectUrl = `${location.origin}${location.pathname}?connect=${id}`;
+    renderQR(connectUrl);
+
     setStatus('ready', 'Ready');
     showScreen('screen-ready');
     detectDragSupport();
+    initBroadcast(id);
+
+    // Auto-connect if this page was opened via a scanned QR URL
+    const targetId = new URLSearchParams(location.search).get('connect');
+    if (targetId && targetId !== id) {
+      showToast('QR detected, connecting…');
+      connectToPeer(targetId);
+    }
   });
 
   peer.on('connection', (incoming) => {
@@ -207,6 +244,8 @@ function setupConn(c) {
     showScreen('screen-transfer');
     showToast('Connected! You can now send files.');
     startHeartbeat();
+    // Remove ?connect= so a page refresh doesn't reconnect automatically
+    if (location.search) history.replaceState(null, '', location.pathname);
   });
 
   conn.on('data', (data) => {
