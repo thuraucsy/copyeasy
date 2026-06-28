@@ -216,6 +216,9 @@ function setupConn(c) {
   conn.on('close', () => {
     stopHeartbeat();
     conn = null;
+    $('chat-messages').innerHTML = '';
+    $('send-queue').innerHTML = '';
+    $('send-queue').classList.add('hidden');
     setStatus('ready', 'Ready');
     showScreen('screen-ready');
     showToast('Disconnected from other device.');
@@ -265,6 +268,9 @@ function handleData(data) {
     case 'pong':
       clearTimeout(heartbeatTimeout);
       heartbeatTimeout = null;
+      break;
+    case 'chat':
+      addChatMessage(data.text, 'received');
       break;
 
     case 'file-start': {
@@ -524,6 +530,61 @@ function showConnectError(msg) {
   }
 }
 
+// ── Chat ───────────────────────────────────────────
+function sendChatMessage() {
+  const input = $('chat-input');
+  const text = input.value.trim();
+  if (!text || !conn?.open) return;
+  conn.send({ type: 'chat', text });
+  addChatMessage(text, 'sent');
+  input.value = '';
+  resizeChatInput(input);
+}
+
+function resizeChatInput(el) {
+  el.style.height = 'auto';
+  el.style.height = el.scrollHeight + 'px';
+}
+
+function addChatMessage(text, direction) {
+  const box = $('chat-messages');
+
+  const wrapper = document.createElement('div');
+  wrapper.style.cssText = `display:flex;flex-direction:column;align-items:${direction === 'sent' ? 'flex-end' : 'flex-start'}`;
+
+  const bubble = document.createElement('div');
+  bubble.className = `chat-bubble chat-bubble--${direction}`;
+  bubble.textContent = text;
+  wrapper.appendChild(bubble);
+
+  if (direction === 'received') {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'chat-copy-btn';
+    copyBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`;
+    copyBtn.addEventListener('click', () => {
+      const done = () => {
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('chat-copy-btn--done');
+        setTimeout(() => {
+          copyBtn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy`;
+          copyBtn.classList.remove('chat-copy-btn--done');
+        }, 2000);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+        done();
+      }
+    });
+    wrapper.appendChild(copyBtn);
+  }
+
+  box.appendChild(wrapper);
+  box.scrollTop = box.scrollHeight;
+  if (direction === 'received') showToast('New message');
+}
+
 // ── Clipboard fallback (works on plain HTTP) ───────
 function fallbackCopy(text) {
   const ta = document.createElement('textarea');
@@ -581,6 +642,25 @@ function initUI() {
     stopHeartbeat();
     if (conn) conn.close();
   });
+
+  // Chat
+  $('btn-send-chat').addEventListener('click', sendChatMessage);
+  $('chat-input').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    if (e.altKey || e.shiftKey) {
+      // Manually insert newline at cursor position
+      const el = e.target;
+      const start = el.selectionStart;
+      const end   = el.selectionEnd;
+      el.value = el.value.slice(0, start) + '\n' + el.value.slice(end);
+      el.selectionStart = el.selectionEnd = start + 1;
+      resizeChatInput(el);
+    } else {
+      sendChatMessage();
+    }
+  });
+  $('chat-input').addEventListener('input', (e) => resizeChatInput(e.target));
 
   // Drop zone
   initDropZone();
